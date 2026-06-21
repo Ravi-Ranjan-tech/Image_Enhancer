@@ -48,6 +48,7 @@ export const FullscreenModal: React.FC<FullscreenModalProps> = ({
             src={beforeUrl}
             alt={name}
             className="h-full w-full object-contain rounded-xl"
+            style={{ imageRendering: 'auto' }}
           />
         )}
       </div>

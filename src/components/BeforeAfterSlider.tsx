@@ -49,6 +49,7 @@ export const BeforeAfterSlider: React.FC<BeforeAfterSliderProps> = ({
           src={afterUrl}
           alt="After - Enhanced"
           className="h-full w-full object-cover"
+          style={{ imageRendering: 'auto' }}
         />
         <div className="absolute bottom-4 right-4 rounded-full bg-white/90 px-4 py-1.5 text-[11px] font-extrabold text-blue-600 shadow-md">
           AFTER
@@ -64,7 +65,11 @@ export const BeforeAfterSlider: React.FC<BeforeAfterSliderProps> = ({
           src={beforeUrl}
           alt="Before - Original"
           className="h-full w-full object-cover"
-          style={{ width: `${100 / (sliderPosition / 100)}%`, maxWidth: "none" }}
+          style={{ 
+            width: `${100 / (sliderPosition / 100)}%`, 
+            maxWidth: "none",
+            imageRendering: 'auto'
+          }}
         />
         <div className="absolute bottom-4 left-4 rounded-full bg-zinc-900/90 px-4 py-1.5 text-[11px] font-extrabold text-white shadow-md">
           BEFORE

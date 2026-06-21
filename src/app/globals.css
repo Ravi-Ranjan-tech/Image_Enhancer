@@ -24,3 +24,35 @@ body {
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
 }
+
+/* SUPER SHARP IMAGES AT ALL ZOOM LEVELS! */
+img, canvas {
+  /* Modern browsers: high-quality bicubic interpolation for photos */
+  image-rendering: auto;
+  
+  /* Safari-specific optimization */
+  image-rendering: -webkit-optimize-contrast;
+  
+  /* IE fallback */
+  -ms-interpolation-mode: bicubic;
+  
+  /* Text anti-aliasing for canvas text */
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  
+  /* Force GPU acceleration for smooth rendering */
+  transform: translateZ(0);
+  -webkit-transform: translateZ(0);
+  
+  /* Prevent blurriness from backface rendering */
+  backface-visibility: hidden;
+  
+  /* Ensure images don't get blurred by browser scaling */
+  -webkit-backface-visibility: hidden;
+}
+
+/* For containers holding images, ensure they don't cause blurriness */
+div:has(img), div:has(canvas) {
+  transform: translateZ(0);
+  -webkit-transform: translateZ(0);
+}

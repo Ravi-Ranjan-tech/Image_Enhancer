@@ -34,16 +34,21 @@ export const ImageCard: React.FC<ImageCardProps> = ({
     <>
       <div className="group relative overflow-hidden rounded-2xl bg-white dark:bg-zinc-900 shadow-sm transition-all hover:shadow-xl">
         {/* Image/Comparison Area */}
-        <div className="relative aspect-[4/3] overflow-hidden">
-          {isEnhanced ? (
-            <BeforeAfterSlider beforeUrl={originalUrl} afterUrl={url} />
-          ) : (
-            <img
-              src={url}
-              alt={name}
-              className="h-full w-full object-cover transition-transform duration-500 group-hover:scale-105"
-            />
-          )}
+      <div className="relative aspect-[4/3] overflow-hidden">
+        {isEnhanced ? (
+          <BeforeAfterSlider beforeUrl={originalUrl} afterUrl={url} />
+        ) : (
+          <img
+            src={url}
+            alt={name}
+            className="h-full w-full object-cover transition-transform duration-500 group-hover:scale-105"
+            style={{ 
+              imageRendering: 'auto',
+              transform: 'translateZ(0)',
+              WebkitTransform: 'translateZ(0)'
+            }}
+          />
+        )}
           
           {/* Enhanced Badge */}
           {isEnhanced && (
@@ -81,7 +86,7 @@ export const ImageCard: React.FC<ImageCardProps> = ({
           {/* Control Buttons */}
           <div className="grid grid-cols-3 gap-2">
             {/* Auto Enhance Button */}
-            {!isEnhanced && (
+            {!isEnhanced ? (
               <button
                 onClick={onEnhance}
                 className="flex items-center justify-center gap-1.5 rounded-xl bg-blue-600 px-3 py-2.5 text-xs font-semibold text-white shadow-sm transition-all hover:bg-blue-500 hover:shadow-md active:scale-95"
@@ -89,6 +94,8 @@ export const ImageCard: React.FC<ImageCardProps> = ({
                 <Wand2 className="h-3.5 w-3.5" />
                 Enhance
               </button>
+            ) : (
+              <div className="flex items-center justify-center rounded-xl bg-transparent px-3 py-2.5" />
             )}
 
             {/* Manual Edit Button */}

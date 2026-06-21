@@ -3,7 +3,7 @@
 import React, { useState, useEffect, useRef } from "react";
 import { X, Check, RotateCcw, Sliders, Wand2 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { motion, AnimatePresence } from "framer-motion";
+import { motion } from "framer-motion";
 
 interface EditingFilters {
   brightness: number;
@@ -51,6 +51,10 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ imageUrl, onSave, onCl
 
     canvas.width = img.width;
     canvas.height = img.height;
+    
+    // High-quality canvas settings
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = "high";
 
     ctx.filter = `
       brightness(${filters.brightness}%)
@@ -60,9 +64,6 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ imageUrl, onSave, onCl
     `;
 
     ctx.drawImage(img, 0, 0);
-    
-    // Simulating sharpness with a simple convolution if needed, 
-    // but for now let's stick to standard filters for performance
   };
 
   useEffect(() => {
@@ -82,7 +83,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ imageUrl, onSave, onCl
   const handleSave = () => {
     const canvas = canvasRef.current;
     if (canvas) {
-      onSave(canvas.toDataURL("image/jpeg", 0.9));
+      onSave(canvas.toDataURL("image/jpeg", 1.0)); // Maximum quality!
     }
   };
 
@@ -114,7 +115,8 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ imageUrl, onSave, onCl
         >
           <canvas
             ref={canvasRef}
-            className="mx-auto max-h-full max-w-full rounded-lg shadow-2xl transition-all duration-300"
+            className="mx-auto max-h-full max-w-full rounded-xl shadow-2xl transition-all duration-300"
+            style={{ imageRendering: 'auto' }}
           />
         </motion.div>
       </div>

@@ -33,6 +33,8 @@ export default function Home() {
   const [images, setImages] = useState<ImageData[]>([]);
   const [editingImageId, setEditingImageId] = useState<string | null>(null);
   const [isEnhancingAll, setIsEnhancingAll] = useState(false);
+  const [isDownloadingAll, setIsDownloadingAll] = useState(false);
+  const [downloadProgress, setDownloadProgress] = useState(0);
   const [isDarkMode, setIsDarkMode] = useState(false);
 
   // Check system preference
@@ -80,47 +82,128 @@ export default function Home() {
     const image = images.find((img) => img.id === id);
     if (!image) return;
 
-    // Simulate AI processing time
-    await new Promise((resolve) => setTimeout(resolve, 1500));
+    try {
+      // Simulate AI processing time (premium feel for advanced enhancement)
+      await new Promise((resolve) => setTimeout(resolve, 3000));
 
-    // Advanced Auto-Enhance Logic using Canvas
-    const enhancedUrl = await performAutoEnhance(image.url);
+      // Advanced Auto-Enhance Logic using Canvas
+      const enhancedUrl = await performAutoEnhance(image.url);
 
-    setImages((prev) =>
-      prev.map((img) =>
-        img.id === id
-          ? { ...img, url: enhancedUrl, isEnhanced: true, isProcessing: false }
-          : img
-      )
-    );
+      setImages((prev) =>
+        prev.map((img) =>
+          img.id === id
+            ? { ...img, url: enhancedUrl, isEnhanced: true, isProcessing: false }
+            : img
+        )
+      );
+    } catch (error) {
+      console.error("Enhancement failed:", error);
+      // If enhancement fails, just mark as not processing so user can try again
+      setImages((prev) =>
+        prev.map((img) =>
+          img.id === id ? { ...img, isProcessing: false } : img
+        )
+      );
+    }
+  };
+
+  // Noticeable but still natural sharpening
+  const applyEffectiveSharpen = (ctx: CanvasRenderingContext2D, width: number, height: number) => {
+    const imageData = ctx.getImageData(0, 0, width, height);
+    const data = imageData.data;
+    const output = new Uint8ClampedArray(data);
+    
+    // Noticeable but gentle 3x3 kernel
+    const kernel = [
+      0, -0.2, 0,
+      -0.2, 1.8, -0.2,
+      0, -0.2, 0
+    ];
+    
+    const kWidth = 3;
+    const kHalf = Math.floor(kWidth / 2);
+    
+    for (let y = kHalf; y < height - kHalf; y++) {
+      for (let x = kHalf; x < width - kHalf; x++) {
+        let r = 0, g = 0, b = 0;
+        
+        for (let ky = 0; ky < kWidth; ky++) {
+          for (let kx = 0; kx < kWidth; kx++) {
+            const px = x + kx - kHalf;
+            const py = y + ky - kHalf;
+            const idx = (py * width + px) * 4;
+            const weight = kernel[ky * kWidth + kx];
+            
+            r += data[idx] * weight;
+            g += data[idx + 1] * weight;
+            b += data[idx + 2] * weight;
+          }
+        }
+        
+        const outputIdx = (y * width + x) * 4;
+        output[outputIdx] = Math.max(0, Math.min(255, r));
+        output[outputIdx + 1] = Math.max(0, Math.min(255, g));
+        output[outputIdx + 2] = Math.max(0, Math.min(255, b));
+      }
+    }
+    
+    ctx.putImageData(new ImageData(output, width, height), 0, 0);
   };
 
   const performAutoEnhance = (url: string): Promise<string> => {
-    return new Promise((resolve) => {
+    return new Promise((resolve, reject) => {
       const img = new Image();
-      img.crossOrigin = "anonymous";
-      img.src = url;
+      
+      const timeoutId = setTimeout(() => {
+        reject(new Error("Image load timeout"));
+      }, 20000);
+      
       img.onload = () => {
-        const canvas = document.createElement("canvas");
-        const ctx = canvas.getContext("2d");
-        if (!ctx) return resolve(url);
+        clearTimeout(timeoutId);
+        try {
+          // Step 1: 2x upscaling
+          const scaleFactor = 2;
+          const originalWidth = img.width;
+          const originalHeight = img.height;
+          const upscaledWidth = originalWidth * scaleFactor;
+          const upscaledHeight = originalHeight * scaleFactor;
+          
+          const canvas = document.createElement("canvas");
+          const ctx = canvas.getContext("2d");
+          if (!ctx) return resolve(url);
+          
+          canvas.width = upscaledWidth;
+          canvas.height = upscaledHeight;
+          
+          ctx.imageSmoothingEnabled = true;
+          ctx.imageSmoothingQuality = "high";
 
-        canvas.width = img.width;
-        canvas.height = img.height;
-
-        // Remini-like enhancement: 
-        // 1. Boost contrast slightly
-        // 2. Adjust brightness for clarity
-        // 3. Increase saturation for vibrancy
-        // 4. Sharpen (simulated via multiple draws or filter)
-        ctx.filter = "contrast(1.1) brightness(1.05) saturate(1.1) contrast(1.1)";
-        ctx.drawImage(img, 0, 0);
-        
-        // Add a subtle sharpening effect by drawing it again with a tiny offset or just using the filter
-        // Modern browsers support the 'sharpness' or similar through convolution but let's keep it simple
-        
-        resolve(canvas.toDataURL("image/jpeg", 0.95));
+          // Step 2: Draw upscaled
+          ctx.drawImage(img, 0, 0, upscaledWidth, upscaledHeight);
+          
+          // Step 3: Noticeable but natural filters
+          ctx.filter = "contrast(1.12) brightness(1.05) saturate(1.1)";
+          ctx.drawImage(canvas, 0, 0, upscaledWidth, upscaledHeight);
+          
+          // Step 4: Effective sharpening
+          ctx.filter = "none";
+          applyEffectiveSharpen(ctx, upscaledWidth, upscaledHeight);
+          
+          // Save at max quality
+          resolve(canvas.toDataURL("image/jpeg", 1.0));
+        } catch (error) {
+          console.error("Canvas error:", error);
+          resolve(url);
+        }
       };
+      
+      img.onerror = () => {
+        clearTimeout(timeoutId);
+        console.error("Image failed to load");
+        resolve(url);
+      };
+      
+      img.src = url;
     });
   };
 
@@ -138,24 +221,129 @@ export default function Home() {
     setIsEnhancingAll(false);
   };
 
+  // Helper function to convert URL (blob or data URL) to blob - more robust!
+  const urlToBlob = (url: string): Promise<Blob> => {
+    return new Promise((resolve, reject) => {
+      // If it's a data URL, parse it directly
+      if (url.startsWith('data:')) {
+        try {
+          const arr = url.split(',');
+          const mime = arr[0].match(/:(.*?);/)?.[1] || 'image/jpeg';
+          const bstr = atob(arr[1]);
+          let n = bstr.length;
+          const u8arr = new Uint8Array(n);
+          while (n--) {
+            u8arr[n] = bstr.charCodeAt(n);
+          }
+          resolve(new Blob([u8arr], { type: mime }));
+        } catch (e) {
+          reject(e);
+        }
+      } else {
+        // If it's a blob URL, fetch it
+        fetch(url)
+          .then(response => response.blob())
+          .then(resolve)
+          .catch(reject);
+      }
+    });
+  };
+
+  const downloadSingleImage = async (img: ImageData) => {
+    try {
+      const blob = await urlToBlob(img.url);
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `enhanced_${img.name}`;
+      link.style.display = 'none';
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      // Revoke the URL after a longer timeout
+      setTimeout(() => URL.revokeObjectURL(url), 5000);
+    } catch (error) {
+      console.error('Single download failed:', error);
+      alert('Failed to download image. Check console for details.');
+    }
+  };
+
+  // Helper to let the browser breathe
+  const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+
   const downloadAll = async () => {
-    if (images.length === 0) return;
-
-    const zip = new JSZip();
-    const folder = zip.folder("enhanced_images");
-
-    for (let i = 0; i < images.length; i++) {
-      const img = images[i];
-      const response = await fetch(img.url);
-      const blob = await response.blob();
-      folder?.file(`enhanced_${img.name}`, blob);
+    console.log('downloadAll called!');
+    console.log('Number of images:', images.length);
+    if (images.length === 0) {
+      console.log('No images to download');
+      return;
     }
 
-    const content = await zip.generateAsync({ type: "blob" });
-    const link = document.createElement("a");
-    link.href = URL.createObjectURL(content);
-    link.download = "enhanced_photos.zip";
-    link.click();
+    setIsDownloadingAll(true);
+    setDownloadProgress(0);
+
+    try {
+      console.log('Initializing JSZip...');
+      const zip = new JSZip();
+
+      // Process each image with small delays
+      console.log('Starting to add images to zip...');
+      for (let i = 0; i < images.length; i++) {
+        const img = images[i];
+        console.log(`Processing image ${i + 1}/${images.length}: ${img.name}`);
+        
+        // Update progress
+        setDownloadProgress(Math.floor((i / images.length) * 50));
+        
+        try {
+          const blob = await urlToBlob(img.url);
+          zip.file(`enhanced_${img.name}`, blob);
+          console.log(`Successfully added ${img.name} to zip`);
+        } catch (err) {
+          console.error(`Failed to add ${img.name} to zip:`, err);
+        }
+
+        // Let the browser render every 5 images
+        if (i % 5 === 4) {
+          await sleep(10);
+        }
+      }
+
+      console.log('Generating zip...');
+      const content = await zip.generateAsync({ type: "blob" }, (metadata) => {
+        const progress = 50 + Math.floor(metadata.percent / 2);
+        setDownloadProgress(progress);
+        console.log(`Zip generation progress: ${metadata.percent.toFixed(0)}%`);
+      });
+
+      setDownloadProgress(100);
+      console.log('Zip generated, size:', content.size, 'bytes');
+
+      const url = URL.createObjectURL(content);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = "enhanced_photos.zip";
+      link.style.display = 'none';
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      
+      // Keep URL valid for 10 seconds
+      setTimeout(() => {
+        console.log('Revoking URL...');
+        URL.revokeObjectURL(url);
+      }, 10000);
+      
+      console.log('Download initiated!');
+    } catch (error) {
+      console.error('Zip download failed completely:', error);
+      alert('Failed to create zip! Error: ' + (error as Error).message);
+    } finally {
+      // Reset states after a brief delay
+      await sleep(1000);
+      setIsDownloadingAll(false);
+      setDownloadProgress(0);
+    }
   };
 
   const saveManualEdit = (id: string, newUrl: string) => {
@@ -207,7 +395,7 @@ export default function Home() {
               <>
                 <button
                   onClick={enhanceAll}
-                  disabled={isEnhancingAll}
+                  disabled={isEnhancingAll || isDownloadingAll}
                   className="flex items-center gap-2 rounded-full bg-blue-600 px-5 py-2.5 text-sm font-semibold text-white shadow-lg shadow-blue-500/25 transition-all hover:bg-blue-500 disabled:opacity-50"
                 >
                   {isEnhancingAll ? (
@@ -217,18 +405,40 @@ export default function Home() {
                   )}
                   Auto Enhance All
                 </button>
-                <button
-                  onClick={downloadAll}
-                  className={cn(
-                    "flex items-center gap-2 rounded-full px-5 py-2.5 text-sm font-semibold shadow-lg transition-all",
-                    isDarkMode 
-                      ? "bg-zinc-800 text-white hover:bg-zinc-700" 
-                      : "bg-zinc-900 text-white hover:bg-zinc-800"
+                
+                {/* Download All Section */}
+                <div className="flex flex-col items-end gap-1">
+                  <button
+                    onClick={downloadAll}
+                    disabled={isDownloadingAll || isEnhancingAll}
+                    className={cn(
+                      "flex items-center gap-2 rounded-full px-5 py-2.5 text-sm font-semibold shadow-lg transition-all",
+                      isDarkMode 
+                        ? "bg-zinc-800 text-white hover:bg-zinc-700" 
+                        : "bg-zinc-900 text-white hover:bg-zinc-800"
+                    )}
+                  >
+                    {isDownloadingAll ? (
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    ) : (
+                      <Download className="h-4 w-4" />
+                    )}
+                    {isDownloadingAll ? `Processing ${downloadProgress}%` : "Download All"}
+                  </button>
+                  
+                  {/* Progress Bar */}
+                  {isDownloadingAll && (
+                    <div className={cn(
+                      "w-40 h-2 rounded-full overflow-hidden",
+                      isDarkMode ? "bg-zinc-700" : "bg-zinc-200"
+                    )}>
+                      <div 
+                        className="h-full bg-blue-500 transition-all duration-200"
+                        style={{ width: `${downloadProgress}%` }}
+                      />
+                    </div>
                   )}
-                >
-                  <Download className="h-4 w-4" />
-                  Download All
-                </button>
+                </div>
               </>
             )}
           </div>
@@ -330,12 +540,7 @@ export default function Home() {
                     onEdit={() => setEditingImageId(img.id)}
                     onDelete={() => deleteImage(img.id)}
                     onEnhance={() => enhanceImage(img.id)}
-                    onDownload={() => {
-                      const link = document.createElement("a");
-                      link.href = img.url;
-                      link.download = `enhanced_${img.name}`;
-                      link.click();
-                    }}
+                    onDownload={() => downloadSingleImage(img)}
                   />
                 </motion.div>
               ))}
@@ -380,13 +585,16 @@ export default function Home() {
       )}
 
       {/* Editor Modal */}
-      {editingImageId && editingImage && (
-        <ImageEditor
-          imageUrl={editingImage.originalUrl}
-          onSave={(newUrl) => saveManualEdit(editingImage.id, newUrl)}
-          onClose={() => setEditingImageId(null)}
-        />
-      )}
+      <AnimatePresence>
+        {editingImageId && editingImage && (
+          <ImageEditor
+            key="editor-modal"
+            imageUrl={editingImage.originalUrl}
+            onSave={(newUrl) => saveManualEdit(editingImage.id, newUrl)}
+            onClose={() => setEditingImageId(null)}
+          />
+        )}
+      </AnimatePresence>
 
       {/* Footer */}
       <footer className={cn(
