@@ -1,9 +1,8 @@
 "use client";
 
-import React, { useState, useCallback, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { 
-  Wand2, 
   Download, 
   Trash2, 
   Zap, 
@@ -12,13 +11,19 @@ import {
   Image as ImageIcon,
   Loader2,
   Moon,
-  Sun
+  Sun,
+  Clock,
+  AlertTriangle,
+  RefreshCw
 } from "lucide-react";
-import { ImageUploader } from "@/components/ImageUploader";
+import { ImageUploader, MAX_IMAGES, MAX_FILE_SIZE_MB, MAX_FILE_SIZE_BYTES } from "@/components/ImageUploader";
 import { ImageCard } from "@/components/ImageCard";
 import { ImageEditor } from "@/components/ImageEditor";
 import { cn } from "@/lib/utils";
 import JSZip from "jszip";
+
+const SESSION_DURATION_MINUTES = 30;
+const SESSION_DURATION_SECONDS = SESSION_DURATION_MINUTES * 60;
 
 interface ImageData {
   id: string;
@@ -27,6 +32,7 @@ interface ImageData {
   name: string;
   isEnhanced: boolean;
   isProcessing: boolean;
+  blobUrls: string[];
 }
 
 export default function Home() {
@@ -36,6 +42,11 @@ export default function Home() {
   const [isDownloadingAll, setIsDownloadingAll] = useState(false);
   const [downloadProgress, setDownloadProgress] = useState(0);
   const [isDarkMode, setIsDarkMode] = useState(false);
+  const [timeRemaining, setTimeRemaining] = useState<number>(SESSION_DURATION_SECONDS);
+  const [sessionWarning, setSessionWarning] = useState<boolean>(false);
+  const [sessionExpired, setSessionExpired] = useState<boolean>(false);
+  const [uploadError, setUploadError] = useState<string | null>(null);
+  const timerRef = useRef<NodeJS.Timeout | null>(null);
 
   // Check system preference
   useEffect(() => {
@@ -46,6 +57,55 @@ export default function Home() {
     }
   }, []);
 
+  useEffect(() => {
+    if (sessionExpired) return;
+    
+    timerRef.current = setInterval(() => {
+      setTimeRemaining((prev) => {
+        if (prev <= 1) {
+          setSessionExpired(true);
+          if (timerRef.current) clearInterval(timerRef.current);
+          return 0;
+        }
+        
+        if (prev === 300) {
+          setSessionWarning(true);
+        }
+        
+        return prev - 1;
+      });
+    }, 1000);
+
+    return () => {
+      if (timerRef.current) clearInterval(timerRef.current);
+    };
+  }, [sessionExpired]);
+
+  const resetSession = () => {
+    setSessionExpired(false);
+    setSessionWarning(false);
+    setTimeRemaining(SESSION_DURATION_SECONDS);
+    clearAllImages();
+  };
+
+  const formatTime = (seconds: number): string => {
+    const mins = Math.floor(seconds / 60);
+    const secs = seconds % 60;
+    return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+  };
+
+  const revokeBlobUrls = (blobUrls: string[]) => {
+    blobUrls.forEach((url) => {
+      try {
+        if (url.startsWith('blob:')) {
+          URL.revokeObjectURL(url);
+        }
+      } catch (e) {
+        console.error('Error revoking URL:', e);
+      }
+    });
+  };
+
   const toggleDarkMode = () => {
     setIsDarkMode(!isDarkMode);
     if (!isDarkMode) {
@@ -55,8 +115,48 @@ export default function Home() {
     }
   };
 
+  const validateAndUploadFiles = (files: File[]): File[] => {
+    setUploadError(null);
+    
+    const validFiles: File[] = [];
+    const tooLarge: File[] = [];
+    
+    files.forEach((file) => {
+      if (file.size > MAX_FILE_SIZE_BYTES) {
+        tooLarge.push(file);
+      } else {
+        validFiles.push(file);
+      }
+    });
+
+    if (tooLarge.length > 0) {
+      setUploadError(`${tooLarge.length} file(s) skipped - exceeding ${MAX_FILE_SIZE_MB}MB size limit.`);
+    }
+
+    const remainingSlots = MAX_IMAGES - images.length;
+    if (validFiles.length > remainingSlots) {
+      const truncated = validFiles.slice(0, remainingSlots);
+      if (remainingSlots === 0) {
+        setUploadError(`Maximum ${MAX_IMAGES} images allowed. No new images added.`);
+        return [];
+      }
+      setUploadError(`Only ${remainingSlots} slot(s) available. Only ${truncated.length} of ${validFiles.length} image(s) will be added.`);
+      return truncated;
+    }
+
+    return validFiles;
+  };
+
   const handleUpload = (files: File[]) => {
-    const newImages = files.map((file) => {
+    if (sessionExpired) {
+      setUploadError('Session expired. Please reset to continue.');
+      return;
+    }
+
+    const validFiles = validateAndUploadFiles(files);
+    if (validFiles.length === 0) return;
+
+    const newImages: ImageData[] = validFiles.map((file) => {
       const url = URL.createObjectURL(file);
       return {
         id: Math.random().toString(36).substring(7),
@@ -65,16 +165,32 @@ export default function Home() {
         name: file.name,
         isEnhanced: false,
         isProcessing: false,
+        blobUrls: [url],
       };
     });
     setImages((prev) => [...prev, ...newImages]);
   };
 
   const deleteImage = (id: string) => {
-    setImages((prev) => prev.filter((img) => img.id !== id));
+    setImages((prev) => {
+      const img = prev.find((i) => i.id === id);
+      if (img) {
+        revokeBlobUrls(img.blobUrls);
+      }
+      return prev.filter((img) => img.id !== id);
+    });
+  };
+
+  const clearAllImages = () => {
+    setImages((prev) => {
+      prev.forEach((img) => revokeBlobUrls(img.blobUrls));
+      return [];
+    });
   };
 
   const enhanceImage = async (id: string) => {
+    if (sessionExpired) return;
+    
     setImages((prev) =>
       prev.map((img) => (img.id === id ? { ...img, isProcessing: true } : img))
     );
@@ -83,22 +199,25 @@ export default function Home() {
     if (!image) return;
 
     try {
-      // Simulate AI processing time (premium feel for advanced enhancement)
       await new Promise((resolve) => setTimeout(resolve, 3000));
 
-      // Advanced Auto-Enhance Logic using Canvas
       const enhancedUrl = await performAutoEnhance(image.url);
 
       setImages((prev) =>
         prev.map((img) =>
           img.id === id
-            ? { ...img, url: enhancedUrl, isEnhanced: true, isProcessing: false }
+            ? { 
+                ...img, 
+                url: enhancedUrl, 
+                isEnhanced: true, 
+                isProcessing: false,
+                blobUrls: [...img.blobUrls, enhancedUrl].filter(u => u.startsWith('blob:'))
+              }
             : img
         )
       );
     } catch (error) {
       console.error("Enhancement failed:", error);
-      // If enhancement fails, just mark as not processing so user can try again
       setImages((prev) =>
         prev.map((img) =>
           img.id === id ? { ...img, isProcessing: false } : img
@@ -208,10 +327,9 @@ export default function Home() {
   };
 
   const enhanceAll = async () => {
-    if (images.length === 0) return;
+    if (images.length === 0 || sessionExpired) return;
     setIsEnhancingAll(true);
     
-    // Process images sequentially or in parallel with a limit
     for (const img of images) {
       if (!img.isEnhanced) {
         await enhanceImage(img.id);
@@ -349,7 +467,12 @@ export default function Home() {
   const saveManualEdit = (id: string, newUrl: string) => {
     setImages((prev) =>
       prev.map((img) =>
-        img.id === id ? { ...img, url: newUrl, isEnhanced: true } : img
+        img.id === id ? { 
+          ...img, 
+          url: newUrl, 
+          isEnhanced: true,
+          blobUrls: [...img.blobUrls, newUrl].filter(u => u.startsWith('blob:'))
+        } : img
       )
     );
     setEditingImageId(null);
@@ -362,14 +485,78 @@ export default function Home() {
       "min-h-screen transition-colors duration-300",
       isDarkMode ? "bg-zinc-950 text-white" : "bg-zinc-50 text-zinc-900"
     )}>
+      {/* Session Expired Overlay */}
+      <AnimatePresence>
+        {sessionExpired && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[100] flex items-center justify-center bg-black/80 backdrop-blur-md p-4"
+          >
+            <motion.div
+              initial={{ scale: 0.9, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              className="max-w-md w-full rounded-3xl bg-white dark:bg-zinc-900 p-8 shadow-2xl text-center"
+            >
+              <div className="mx-auto flex h-20 w-20 items-center justify-center rounded-full bg-red-100 text-red-600 dark:bg-red-900/30 dark:text-red-400 mb-6">
+                <AlertTriangle className="h-10 w-10" />
+              </div>
+              <h2 className="text-2xl font-bold text-zinc-900 dark:text-white mb-2">
+                Session Time Expired
+              </h2>
+              <p className="text-zinc-500 dark:text-zinc-400 mb-8">
+                Your {SESSION_DURATION_MINUTES}-minute session has ended. Reset the timer to continue using the app and ensure system stability.
+              </p>
+              <button
+                onClick={resetSession}
+                className="flex items-center justify-center gap-2 w-full rounded-2xl bg-blue-600 px-6 py-4 text-base font-semibold text-white shadow-lg shadow-blue-500/30 transition-all hover:bg-blue-500 hover:scale-[1.02]"
+              >
+                <RefreshCw className="h-5 w-5" />
+                Reset Session & Start Fresh
+              </button>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Session Warning Banner */}
+      <AnimatePresence>
+        {sessionWarning && !sessionExpired && (
+          <motion.div
+            initial={{ y: -100, opacity: 0 }}
+            animate={{ y: 0, opacity: 1 }}
+            exit={{ y: -100, opacity: 0 }}
+            className="fixed top-0 left-0 right-0 z-50 bg-amber-500 text-white px-4 py-3 shadow-lg"
+          >
+            <div className="mx-auto max-w-7xl flex items-center justify-between gap-4">
+              <div className="flex items-center gap-3">
+                <AlertTriangle className="h-5 w-5 flex-shrink-0" />
+                <p className="text-sm font-medium">
+                  Warning: Less than 5 minutes remaining! Please save your work or reset the session.
+                </p>
+              </div>
+              <button
+                onClick={resetSession}
+                className="flex items-center gap-2 flex-shrink-0 rounded-full bg-white/20 px-4 py-2 text-xs font-semibold hover:bg-white/30 transition-all"
+              >
+                <RefreshCw className="h-4 w-4" />
+                Reset Timer
+              </button>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       {/* Header */}
       <header className={cn(
         "sticky top-0 z-40 border-b backdrop-blur-md transition-colors duration-300",
+        sessionWarning && !sessionExpired && "pt-12",
         isDarkMode 
           ? "border-zinc-800 bg-zinc-950/80" 
           : "border-zinc-200 bg-white/80"
       )}>
-        <div className="mx-auto flex max-w-7xl items-center justify-between px-4 py-4 sm:px-6 lg:px-8">
+        <div className="mx-auto flex max-w-7xl items-center justify-between px-4 py-4 sm:px-6 lg:px-8 gap-4 flex-wrap">
           <div className="flex items-center gap-2">
             <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-blue-600 text-white shadow-lg shadow-blue-500/30">
               <Sparkles className="h-6 w-6" />
@@ -379,7 +566,42 @@ export default function Home() {
             </h1>
           </div>
           
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-3 flex-wrap">
+            {/* Session Timer */}
+            <div className={cn(
+              "flex items-center gap-2 rounded-full px-4 py-2 border transition-all",
+              sessionExpired 
+                ? "bg-red-100 border-red-300 text-red-700 dark:bg-red-900/30 dark:border-red-800 dark:text-red-300"
+                : timeRemaining <= 300 
+                  ? "bg-amber-100 border-amber-300 text-amber-700 dark:bg-amber-900/30 dark:border-amber-800 dark:text-amber-300 animate-pulse"
+                  : isDarkMode
+                    ? "bg-zinc-800 border-zinc-700 text-zinc-200"
+                    : "bg-zinc-50 border-zinc-200 text-zinc-700"
+            )}>
+              <Clock className={cn(
+                "h-4 w-4",
+                timeRemaining <= 300 && !sessionExpired ? "animate-pulse" : ""
+              )} />
+              <span className="text-sm font-mono font-bold tabular-nums">
+                {formatTime(timeRemaining)}
+              </span>
+            </div>
+
+            {/* Image Counter */}
+            <div className={cn(
+              "flex items-center gap-2 rounded-full px-4 py-2 border text-sm font-semibold",
+              images.length >= MAX_IMAGES
+                ? "bg-red-100 border-red-300 text-red-700 dark:bg-red-900/30 dark:border-red-800 dark:text-red-300"
+                : images.length >= MAX_IMAGES * 0.8
+                  ? "bg-amber-100 border-amber-300 text-amber-700 dark:bg-amber-900/30 dark:border-amber-800 dark:text-amber-300"
+                  : isDarkMode
+                    ? "bg-zinc-800 border-zinc-700 text-zinc-200"
+                    : "bg-zinc-50 border-zinc-200 text-zinc-700"
+            )}>
+              <ImageIcon className="h-4 w-4" />
+              <span>{images.length}/{MAX_IMAGES}</span>
+            </div>
+
             {/* Theme Toggle */}
             <button
               onClick={toggleDarkMode}
@@ -387,16 +609,29 @@ export default function Home() {
                 "flex h-10 w-10 items-center justify-center rounded-full transition-all hover:scale-110",
                 isDarkMode ? "bg-zinc-800 text-yellow-400 hover:bg-zinc-700" : "bg-zinc-100 text-zinc-600 hover:bg-zinc-200"
               )}
+              title="Toggle theme"
             >
               {isDarkMode ? <Sun className="h-5 w-5" /> : <Moon className="h-5 w-5" />}
+            </button>
+
+            {/* Reset Session */}
+            <button
+              onClick={resetSession}
+              className={cn(
+                "flex h-10 w-10 items-center justify-center rounded-full transition-all hover:scale-110",
+                isDarkMode ? "bg-zinc-800 text-blue-400 hover:bg-zinc-700" : "bg-zinc-100 text-blue-600 hover:bg-zinc-200"
+              )}
+              title="Reset session timer & clear all"
+            >
+              <RefreshCw className="h-5 w-5" />
             </button>
 
             {images.length > 0 && (
               <>
                 <button
                   onClick={enhanceAll}
-                  disabled={isEnhancingAll || isDownloadingAll}
-                  className="flex items-center gap-2 rounded-full bg-blue-600 px-5 py-2.5 text-sm font-semibold text-white shadow-lg shadow-blue-500/25 transition-all hover:bg-blue-500 disabled:opacity-50"
+                  disabled={isEnhancingAll || isDownloadingAll || sessionExpired}
+                  className="flex items-center gap-2 rounded-full bg-blue-600 px-5 py-2.5 text-sm font-semibold text-white shadow-lg shadow-blue-500/25 transition-all hover:bg-blue-500 disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   {isEnhancingAll ? (
                     <Loader2 className="h-4 w-4 animate-spin" />
@@ -410,12 +645,13 @@ export default function Home() {
                 <div className="flex flex-col items-end gap-1">
                   <button
                     onClick={downloadAll}
-                    disabled={isDownloadingAll || isEnhancingAll}
+                    disabled={isDownloadingAll || isEnhancingAll || sessionExpired}
                     className={cn(
                       "flex items-center gap-2 rounded-full px-5 py-2.5 text-sm font-semibold shadow-lg transition-all",
                       isDarkMode 
                         ? "bg-zinc-800 text-white hover:bg-zinc-700" 
-                        : "bg-zinc-900 text-white hover:bg-zinc-800"
+                        : "bg-zinc-900 text-white hover:bg-zinc-800",
+                      "disabled:opacity-50 disabled:cursor-not-allowed"
                     )}
                   >
                     {isDownloadingAll ? (
@@ -472,7 +708,14 @@ export default function Home() {
             </p>
             
             <div className="mx-auto mt-16 max-w-3xl">
-              <ImageUploader onUpload={handleUpload} />
+              <ImageUploader onUpload={handleUpload} currentImageCount={images.length} />
+              
+              {uploadError && (
+                <div className="mt-4 flex items-start gap-3 rounded-xl border border-red-200 bg-red-50 p-4 dark:border-red-900/50 dark:bg-red-900/20">
+                  <AlertTriangle className="h-5 w-5 flex-shrink-0 text-red-500 mt-0.5" />
+                  <p className="text-sm text-red-700 dark:text-red-300">{uploadError}</p>
+                </div>
+              )}
             </div>
 
             <div className="mt-20 grid grid-cols-1 gap-8 sm:grid-cols-3">
@@ -487,7 +730,7 @@ export default function Home() {
       {/* Workspace Section */}
       {images.length > 0 && (
         <section className="mx-auto max-w-7xl px-4 py-12 sm:px-6 lg:px-8">
-          <div className="mb-8 flex items-center justify-between">
+          <div className="mb-8 flex items-center justify-between flex-wrap gap-4">
             <div>
               <h3 className={cn(
                 "text-2xl font-bold",
@@ -499,17 +742,32 @@ export default function Home() {
                 "text-sm",
                 isDarkMode ? "text-zinc-400" : "text-zinc-500"
               )}>
-                Manage and enhance your uploaded photos
+                Manage and enhance your uploaded photos ({images.length}/{MAX_IMAGES})
               </p>
             </div>
             <button 
-              onClick={() => setImages([])}
+              onClick={clearAllImages}
               className="flex items-center gap-2 text-sm font-medium text-red-500 hover:text-red-600"
             >
               <Trash2 className="h-4 w-4" />
               Clear All
             </button>
           </div>
+
+          {uploadError && (
+            <div className="mb-6 flex items-start gap-3 rounded-xl border border-red-200 bg-red-50 p-4 dark:border-red-900/50 dark:bg-red-900/20">
+              <AlertTriangle className="h-5 w-5 flex-shrink-0 text-red-500 mt-0.5" />
+              <div>
+                <p className="text-sm text-red-700 dark:text-red-300">{uploadError}</p>
+                <button 
+                  onClick={() => setUploadError(null)}
+                  className="mt-1 text-xs text-red-500 hover:underline"
+                >
+                  Dismiss
+                </button>
+              </div>
+            </div>
+          )}
 
           <motion.div 
             layout
@@ -547,39 +805,47 @@ export default function Home() {
             </AnimatePresence>
             
             {/* Add More Button */}
-            <motion.div 
-              layout
-              className={cn(
-                "flex aspect-[4/3] cursor-pointer flex-col items-center justify-center rounded-2xl border-2 border-dashed transition-all hover:border-blue-500",
-                isDarkMode 
-                  ? "border-zinc-800 bg-zinc-900/50 hover:bg-blue-900/10" 
-                  : "border-zinc-200 bg-white hover:bg-blue-50/50"
-              )}
-              onClick={() => document.getElementById("hidden-upload")?.click()}
-            >
-              <div className={cn(
-                "flex h-12 w-12 items-center justify-center rounded-full",
-                isDarkMode ? "bg-zinc-800 text-zinc-400" : "bg-zinc-100 text-zinc-400"
-              )}>
-                <ImageIcon className="h-6 w-6" />
-              </div>
-              <p className={cn(
-                "mt-2 text-sm font-medium",
-                isDarkMode ? "text-zinc-400" : "text-zinc-500"
-              )}>
-                Add More Photos
-              </p>
-              <input 
-                id="hidden-upload"
-                type="file" 
-                multiple 
-                accept="image/*" 
-                className="hidden" 
-                onChange={(e) => {
-                  if (e.target.files) handleUpload(Array.from(e.target.files));
-                }}
-              />
-            </motion.div>
+            {images.length < MAX_IMAGES && !sessionExpired && (
+              <motion.div 
+                layout
+                className={cn(
+                  "flex aspect-[4/3] cursor-pointer flex-col items-center justify-center rounded-2xl border-2 border-dashed transition-all hover:border-blue-500",
+                  isDarkMode 
+                    ? "border-zinc-800 bg-zinc-900/50 hover:bg-blue-900/10" 
+                    : "border-zinc-200 bg-white hover:bg-blue-50/50"
+                )}
+                onClick={() => document.getElementById("hidden-upload")?.click()}
+              >
+                <div className={cn(
+                  "flex h-12 w-12 items-center justify-center rounded-full",
+                  isDarkMode ? "bg-zinc-800 text-zinc-400" : "bg-zinc-100 text-zinc-400"
+                )}>
+                  <ImageIcon className="h-6 w-6" />
+                </div>
+                <p className={cn(
+                  "mt-2 text-sm font-medium",
+                  isDarkMode ? "text-zinc-400" : "text-zinc-500"
+                )}>
+                  Add More Photos
+                </p>
+                <p className="mt-1 text-xs text-zinc-400">
+                  {MAX_IMAGES - images.length} slot(s) left
+                </p>
+                <input 
+                  id="hidden-upload"
+                  type="file" 
+                  multiple 
+                  accept="image/*" 
+                  className="hidden" 
+                  onChange={(e) => {
+                    if (e.target.files) {
+                      handleUpload(Array.from(e.target.files));
+                      e.target.value = '';
+                    }
+                  }}
+                />
+              </motion.div>
+            )}
           </motion.div>
         </section>
       )}

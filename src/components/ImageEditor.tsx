@@ -1,8 +1,7 @@
 "use client";
 
-import React, { useState, useEffect, useRef } from "react";
-import { X, Check, RotateCcw, Sliders, Wand2 } from "lucide-react";
-import { cn } from "@/lib/utils";
+import React, { useState, useEffect, useRef, useCallback } from "react";
+import { X, Check, RotateCcw } from "lucide-react";
 import { motion } from "framer-motion";
 
 interface EditingFilters {
@@ -31,17 +30,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ imageUrl, onSave, onCl
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const imageRef = useRef<HTMLImageElement | null>(null);
 
-  useEffect(() => {
-    const img = new Image();
-    img.crossOrigin = "anonymous";
-    img.src = imageUrl;
-    img.onload = () => {
-      imageRef.current = img;
-      applyFilters();
-    };
-  }, [imageUrl]);
-
-  const applyFilters = () => {
+  const applyFilters = useCallback(() => {
     const canvas = canvasRef.current;
     const img = imageRef.current;
     if (!canvas || !img) return;
@@ -52,7 +41,6 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ imageUrl, onSave, onCl
     canvas.width = img.width;
     canvas.height = img.height;
     
-    // High-quality canvas settings
     ctx.imageSmoothingEnabled = true;
     ctx.imageSmoothingQuality = "high";
 
@@ -64,11 +52,21 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ imageUrl, onSave, onCl
     `;
 
     ctx.drawImage(img, 0, 0);
-  };
+  }, [filters]);
+
+  useEffect(() => {
+    const img = new Image();
+    img.crossOrigin = "anonymous";
+    img.src = imageUrl;
+    img.onload = () => {
+      imageRef.current = img;
+      applyFilters();
+    };
+  }, [imageUrl, applyFilters]);
 
   useEffect(() => {
     applyFilters();
-  }, [filters]);
+  }, [applyFilters]);
 
   const handleReset = () => {
     setFilters({
